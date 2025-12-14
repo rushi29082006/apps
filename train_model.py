@@ -3,15 +3,16 @@ import pandas as pd
 import joblib
 
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 
 
 df = pd.read_csv("dataset.csv")
 
-df["Loan_Status"] = df["Loan_Status"].map({"N": 0, "Y": 1})
+df["Loan_Status"] = df["Loan_Status"].map({"N": 1, "Y": 0})  # 1 = default risk
 df["Dependents"] = df["Dependents"].replace("3+", 4)
 
 df.replace({
@@ -25,25 +26,25 @@ df.replace({
 X = df.drop(columns=["Loan_ID", "Loan_Status"])
 y = df["Loan_Status"]
 
+X["ApplicantIncome"] = np.log1p(X["ApplicantIncome"])
+X["CoapplicantIncome"] = np.log1p(X["CoapplicantIncome"])
+
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.1, stratify=y, random_state=42
 )
 
 pipeline = Pipeline([
     ("imputer", SimpleImputer(strategy="median")),
-    ("rf", RandomForestClassifier(
-        n_estimators=300,
-        max_depth=8,
-        min_samples_split=10,
-        random_state=42
+    ("scaler", StandardScaler()),
+    ("lr", LogisticRegression(
+        class_weight="balanced",
+        max_iter=1000
     ))
 ])
 
 pipeline.fit(X_train, y_train)
 
-y_pred = pipeline.predict(X_test)
-print("Accuracy:", accuracy_score(y_test, y_pred))
+pd_scores = pipeline.predict_proba(X_test)[:, 1]
+print("ROC AUC:", roc_auc_score(y_test, pd_scores))
 
 joblib.dump(pipeline, "loan_model.pkl")
-
-print("Model saved")
