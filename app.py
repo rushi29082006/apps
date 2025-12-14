@@ -5,12 +5,8 @@ import streamlit as st
 st.set_page_config(page_title="Loan Approval Prediction", layout="centered")
 st.title("Loan Approval Prediction System")
 
-try:
-    model = joblib.load("loan_model.pkl")
-    scaler = joblib.load("scaler.pkl")
-except:
-    st.error("Model files missing")
-    st.stop()
+model = joblib.load("loan_model.pkl")
+scaler = joblib.load("scaler.pkl")
 
 gender = st.selectbox("Gender", ["Male", "Female"])
 married = st.selectbox("Married", ["Yes", "No"])
@@ -35,6 +31,7 @@ dependents = 4 if dependents == "3+" else int(dependents)
 property_area = {"Rural": 0, "Semiurban": 1, "Urban": 2}[property_area]
 
 if st.button("Predict Loan Status"):
+
     if applicant_income == 0 and coapplicant_income == 0:
         st.warning("Income cannot be zero for both applicants")
         st.stop()
@@ -49,9 +46,13 @@ if st.button("Predict Loan Status"):
     ]])
 
     data = scaler.transform(data)
-    prediction = model.predict(data)
 
-    if prediction[0] == 1:
+    probability = model.predict_proba(data)[0][1]
+    threshold = 0.6  # BANK DECISION THRESHOLD
+
+    st.write(f"Approval Probability: **{probability*100:.2f}%**")
+
+    if probability >= threshold:
         st.success("Loan Approved")
     else:
         st.error("Loan Rejected")
