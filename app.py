@@ -1,59 +1,46 @@
 import numpy as np
-import pandas as pd
+import joblib
+import streamlit as st
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+model = joblib.load("loan_model.pkl")
+scaler = joblib.load("scaler.pkl")
 
+st.set_page_config(page_title="Loan Approval Prediction", layout="centered")
+st.title("Loan Approval Prediction System")
 
-# Load dataset
-data = pd.read_csv("dataset.csv")
+gender = st.selectbox("Gender", ["Male", "Female"])
+married = st.selectbox("Married", ["Yes", "No"])
+dependents = st.selectbox("Dependents", ["0", "1", "2", "3+"])
+education = st.selectbox("Education", ["Graduate", "Not Graduate"])
+self_employed = st.selectbox("Self Employed", ["Yes", "No"])
 
-# Remove missing values
-data = data.dropna()
+applicant_income = st.number_input("Applicant Income", min_value=0.0)
+coapplicant_income = st.number_input("Coapplicant Income", min_value=0.0)
+loan_amount = st.number_input("Loan Amount", min_value=0.0)
+loan_term = st.number_input("Loan Amount Term (months)", min_value=0.0)
 
-# Encode target column
-data["Loan_Status"] = data["Loan_Status"].map({"N": 0, "Y": 1})
+credit_history = st.selectbox("Credit History", ["Good", "Bad"])
+property_area = st.selectbox("Property Area", ["Rural", "Semiurban", "Urban"])
 
-# Handle special category
-data["Dependents"] = data["Dependents"].replace("3+", 4)
+gender = 1 if gender == "Male" else 0
+married = 1 if married == "Yes" else 0
+education = 1 if education == "Graduate" else 0
+self_employed = 1 if self_employed == "Yes" else 0
+credit_history = 1 if credit_history == "Good" else 0
+dependents = 4 if dependents == "3+" else int(dependents)
+property_area = {"Rural": 0, "Semiurban": 1, "Urban": 2}[property_area]
 
-# Encode categorical features
-data.replace({
-    "Gender": {"Male": 1, "Female": 0},
-    "Married": {"Yes": 1, "No": 0},
-    "Education": {"Graduate": 1, "Not Graduate": 0},
-    "Self_Employed": {"Yes": 1, "No": 0},
-    "Property_Area": {"Rural": 0, "Semiurban": 1, "Urban": 2}
-}, inplace=True)
+if st.button("Predict Loan Status"):
+    data = np.array([[
+        gender, married, dependents, education, self_employed,
+        applicant_income, coapplicant_income,
+        loan_amount, loan_term, credit_history, property_area
+    ]])
 
-# Split features and label
-X = data.drop(columns=["Loan_ID", "Loan_Status"])
-y = data["Loan_Status"]
+    data = scaler.transform(data)
+    result = model.predict(data)
 
-# Train-test split
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.1, stratify=y, random_state=2
-)
-
-# Scale features
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train)
-X_test = scaler.transform(X_test)
-
-# Train model
-model = SVC(kernel="linear")
-model.fit(X_train, y_train)
-
-# Evaluate model
-y_pred = model.predict(X_test)
-print("Accuracy:", accuracy_score(y_test, y_pred))
-print("Confusion Matrix:\n", confusion_matrix(y_test, y_pred))
-print("Classification Report:\n", classification_report(y_test, y_pred))
-
-# Save model and scaler
-joblib.dump(model, "loan_model.pkl")
-joblib.dump(scaler, "scaler.pkl")
-
-print("Model and scaler saved successfully")
+    if result[0] == 1:
+        st.success("Loan Approved")
+    else:
+        st.error("Loan Rejected")
