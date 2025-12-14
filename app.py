@@ -1,91 +1,57 @@
 import numpy as np
-import pandas as pd
 import joblib
+import streamlit as st
 
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score
+st.set_page_config(page_title="Loan Approval Prediction", layout="centered")
+st.title("Loan Approval Prediction System")
 
+try:
+    model = joblib.load("loan_model.pkl")
+    scaler = joblib.load("scaler.pkl")
+except:
+    st.error("Model files missing")
+    st.stop()
 
-# ================= LOAD DATA =================
-df = pd.read_csv("dataset.csv")
+gender = st.selectbox("Gender", ["Male", "Female"])
+married = st.selectbox("Married", ["Yes", "No"])
+dependents = st.selectbox("Dependents", ["0", "1", "2", "3+"])
+education = st.selectbox("Education", ["Graduate", "Not Graduate"])
+self_employed = st.selectbox("Self Employed", ["Yes", "No"])
 
-df["Loan_Status"] = df["Loan_Status"].map({"N": 0, "Y": 1})
-df["Dependents"] = df["Dependents"].replace("3+", 4)
+applicant_income = st.number_input("Applicant Income", min_value=0)
+coapplicant_income = st.number_input("Coapplicant Income", min_value=0)
+loan_amount = st.number_input("Loan Amount", min_value=1)
+loan_term = st.selectbox("Loan Term (months)", [120, 180, 240, 300, 360, 480])
 
-df.replace({
-    "Gender": {"Male": 1, "Female": 0},
-    "Married": {"Yes": 1, "No": 0},
-    "Education": {"Graduate": 1, "Not Graduate": 0},
-    "Self_Employed": {"Yes": 1, "No": 0},
-    "Property_Area": {"Rural": 0, "Semiurban": 1, "Urban": 2}
-}, inplace=True)
+credit_history = st.selectbox("Credit History", ["Good", "Bad"])
+property_area = st.selectbox("Property Area", ["Rural", "Semiurban", "Urban"])
 
-X = df.drop(columns=["Loan_ID", "Loan_Status"])
-y = df["Loan_Status"]
+gender = 1 if gender == "Male" else 0
+married = 1 if married == "Yes" else 0
+education = 1 if education == "Graduate" else 0
+self_employed = 1 if self_employed == "Yes" else 0
+credit_history = 1 if credit_history == "Good" else 0
+dependents = 4 if dependents == "3+" else int(dependents)
+property_area = {"Rural": 0, "Semiurban": 1, "Urban": 2}[property_area]
 
-# Log transform skewed income features
-X["ApplicantIncome"] = np.log1p(X["ApplicantIncome"])
-X["CoapplicantIncome"] = np.log1p(X["CoapplicantIncome"])
+if st.button("Predict Loan Status"):
+    if applicant_income == 0 and coapplicant_income == 0:
+        st.warning("Income cannot be zero for both applicants")
+        st.stop()
 
+    applicant_income = np.log1p(applicant_income)
+    coapplicant_income = np.log1p(coapplicant_income)
 
-# ================= SPLIT =================
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.1, stratify=y, random_state=42
-)
+    data = np.array([[
+        gender, married, dependents, education, self_employed,
+        applicant_income, coapplicant_income,
+        loan_amount, loan_term, credit_history, property_area
+    ]])
 
+    data = scaler.transform(data)
+    prediction = model.predict(data)
 
-# ================= PIPELINE =================
-pipeline = Pipeline([
-    ("imputer", SimpleImputer(strategy="median")),
-    ("scaler", StandardScaler()),
-    ("svm", SVC(kernel="rbf"))
-])
-
-
-# ================= HYPERPARAMETERS =================
-param_grid = {
-    "svm__C": [1, 10],
-    "svm__gamma": [0.1]
-}
-
-
-grid = GridSearchCV(
-    pipeline,
-    param_grid,
-    cv=5,
-    scoring="accuracy"
-)
-
-grid.fit(X_train, y_train)
-
-model = grid.best_estimator_
-
-
-# ================= EVALUATION =================
-y_pred = model.predict(X_test)
-print("Accuracy:", accuracy_score(y_test, y_pred))
-
-
-# ================= DEPENDENCIES OUTPUT =================
-print("\nMODEL DEPENDS ON THESE INPUT FEATURES:")
-for col in X.columns:
-    print("-", col)
-
-print("\nSVM HYPERPARAMETERS USED:")
-print(model.named_steps["svm"].get_params())
-
-print("\nSCALER PARAMETERS (mean, std):")
-print("Mean:", model.named_steps["scaler"].mean_)
-print("Scale:", model.named_steps["scaler"].scale_)
-
-print("\nIMPUTER STRATEGY:")
-print(model.named_steps["imputer"].strategy)
-
-
-# ================= SAVE =================
-joblib.dump(model, "loan_model.pkl")
-joblib.dump(model.named_steps["scaler"], "scaler.pkl")
+    if prediction[0] == 1:
+        st.success("Loan Approved")
+    else:
+        st.error("Loan Rejected")
