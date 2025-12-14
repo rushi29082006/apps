@@ -2,11 +2,10 @@ import numpy as np
 import pandas as pd
 import joblib
 
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score
 
 
@@ -26,45 +25,25 @@ df.replace({
 X = df.drop(columns=["Loan_ID", "Loan_Status"])
 y = df["Loan_Status"]
 
-X["ApplicantIncome"] = np.log1p(X["ApplicantIncome"])
-X["CoapplicantIncome"] = np.log1p(X["CoapplicantIncome"])
-
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.1, stratify=y, random_state=42
 )
 
 pipeline = Pipeline([
     ("imputer", SimpleImputer(strategy="median")),
-    ("scaler", StandardScaler()),
-    ("svm", SVC(kernel="rbf"))
+    ("rf", RandomForestClassifier(
+        n_estimators=300,
+        max_depth=8,
+        min_samples_split=10,
+        random_state=42
+    ))
 ])
 
-param_grid = {
-    "svm__C": [1, 10],
-    "svm__gamma": [0.1]
-}
+pipeline.fit(X_train, y_train)
 
-grid = GridSearchCV(
-    pipeline,
-    param_grid,
-    cv=5,
-    scoring="accuracy"
-)
-
-grid.fit(X_train, y_train)
-
-model = grid.best_estimator_
-
-y_pred = model.predict(X_test)
+y_pred = pipeline.predict(X_test)
 print("Accuracy:", accuracy_score(y_test, y_pred))
 
-print("\nModel depends on these features:")
-print(list(X.columns))
+joblib.dump(pipeline, "loan_model.pkl")
 
-print("\nSVM hyperparameters:")
-print(model.named_steps["svm"].get_params())
-
-joblib.dump(model, "loan_model.pkl")
-joblib.dump(model.named_steps["scaler"], "scaler.pkl")
-
-print("\nModel saved successfully")
+print("Model saved")

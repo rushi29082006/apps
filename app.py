@@ -6,7 +6,6 @@ st.set_page_config(page_title="Loan Approval Prediction", layout="centered")
 st.title("Loan Approval Prediction System")
 
 model = joblib.load("loan_model.pkl")
-scaler = joblib.load("scaler.pkl")
 
 gender = st.selectbox("Gender", ["Male", "Female"])
 married = st.selectbox("Married", ["Yes", "No"])
@@ -32,27 +31,40 @@ property_area = {"Rural": 0, "Semiurban": 1, "Urban": 2}[property_area]
 
 if st.button("Predict Loan Status"):
 
-    if applicant_income == 0 and coapplicant_income == 0:
-        st.warning("Income cannot be zero for both applicants")
-        st.stop()
-
-    applicant_income = np.log1p(applicant_income)
-    coapplicant_income = np.log1p(coapplicant_income)
-
     data = np.array([[
         gender, married, dependents, education, self_employed,
         applicant_income, coapplicant_income,
         loan_amount, loan_term, credit_history, property_area
     ]])
 
-    data = scaler.transform(data)
-
+    prediction = model.predict(data)[0]
     probability = model.predict_proba(data)[0][1]
-    threshold = 0.6  # BANK DECISION THRESHOLD
 
     st.write(f"Approval Probability: **{probability*100:.2f}%**")
 
-    if probability >= threshold:
+    if prediction == 1:
         st.success("Loan Approved")
     else:
         st.error("Loan Rejected")
+
+    # ---------------- EXPLANATION ----------------
+    st.subheader("Why this decision?")
+
+    reasons = []
+
+    if credit_history == 0:
+        reasons.append("Poor credit history")
+    if applicant_income < 3000:
+        reasons.append("Low applicant income")
+    if loan_amount > applicant_income * 10:
+        reasons.append("High loan amount compared to income")
+    if dependents >= 3:
+        reasons.append("High number of dependents")
+    if self_employed == 1:
+        reasons.append("Self-employed income risk")
+
+    if reasons:
+        for r in reasons:
+            st.write("•", r)
+    else:
+        st.write("• Strong financial profile")
