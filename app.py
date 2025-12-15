@@ -1,41 +1,65 @@
-import streamlit as st
 import numpy as np
+import joblib
+import streamlit as st
 
 # ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="Loan Eligibility (70% EMI Rule)", layout="centered")
-st.title("Loan Eligibility System – EMI 70% Rule")
+st.set_page_config(page_title="Mini Bank Loan System", layout="centered")
+st.title("Mini Bank Loan Decision System")
 
-# ---------------- INPUTS ----------------
-st.subheader("Applicant Details")
+model = joblib.load("loan_model.pkl")
 
-applicant_name = st.text_input("Applicant Name")
+# ---------------- USER INPUTS ----------------
+gender = st.selectbox("Gender", ["Male", "Female"])
+married = st.selectbox("Married", ["Yes", "No"])
+dependents = st.selectbox("Dependents", ["0", "1", "2", "3+"])
+education = st.selectbox("Education", ["Graduate", "Not Graduate"])
+self_employed = st.selectbox("Self Employed", ["Yes", "No"])
+
+# -------- MONTHLY INCOME --------
 applicant_income = st.number_input(
     "Applicant Monthly Income (₹)", min_value=0, step=1000
 )
-
-coapplicant_name = st.text_input("Co-applicant Name (Optional)")
 coapplicant_income = st.number_input(
     "Co-applicant Monthly Income (₹)", min_value=0, step=1000
 )
-
 total_income = applicant_income + coapplicant_income
 
-st.subheader("Loan Details")
-
+# -------- TENURE (MONTHS) --------
 loan_term_months = st.slider(
-    "Loan Tenure (Months)", min_value=12, max_value=360, value=120, step=12
+    "Loan Tenure (Months)", min_value=12, max_value=360, value=240, step=12
 )
 
-requested_loan = st.number_input(
+# -------- CREDIT SCORE --------
+credit_score = st.slider(
+    "Credit Score (300–900)", min_value=300, max_value=900, value=700, step=10
+)
+
+property_area = st.selectbox("Property Area", ["Rural", "Semiurban", "Urban"])
+
+# -------- REQUESTED LOAN --------
+loan_amount = st.number_input(
     "Requested Loan Amount (₹)", min_value=10000, step=10000
 )
 
 # ---------------- CONSTANTS ----------------
-ANNUAL_INTEREST_RATE = 0.12   # higher rate (realistic for 70% EMI loans)
-MONTHLY_RATE = ANNUAL_INTEREST_RATE / 12
-MAX_DTI = 0.70   # 🔥 70% EMI RULE
+ANNUAL_RATE = 0.09
+MONTHLY_RATE = ANNUAL_RATE / 12
+MAX_DTI = 0.40
 
 # ---------------- FUNCTIONS ----------------
+def credit_multiplier(score):
+    if score >= 800:
+        return 1.0
+    elif score >= 750:
+        return 0.85
+    elif score >= 700:
+        return 0.70
+    elif score >= 650:
+        return 0.55
+    else:
+        return 0.0
+
+
 def calculate_max_loan(max_emi, months):
     return (
         max_emi * ((1 + MONTHLY_RATE) ** months - 1)
@@ -47,51 +71,121 @@ def calculate_emi(amount, months):
         amount * MONTHLY_RATE * (1 + MONTHLY_RATE) ** months
     ) / ((1 + MONTHLY_RATE) ** months - 1)
 
+
+def credit_advice(score, dti):
+    advice = []
+    if score < 650:
+        advice += [
+            "Pay EMIs and credit card bills on time for at least 6 months.",
+            "Keep credit card utilization below 30%.",
+            "Avoid applying for multiple loans or cards."
+        ]
+    if score < 700:
+        advice += [
+            "Clear small outstanding loans.",
+            "Do not close old credit accounts."
+        ]
+    if dti > 0.40:
+        advice += [
+            "Reduce existing debts.",
+            "Apply for a lower loan amount or longer tenure."
+        ]
+    advice.append("Maintain stable employment for 6–12 months.")
+    return advice
+
 # ---------------- PROCESS ----------------
-if st.button("Check Eligibility"):
+if st.button("Check Loan Eligibility"):
 
-    if applicant_name.strip() == "":
-        st.error("Applicant name is required")
-        st.stop()
+    rejection_reasons = []
 
-    if total_income <= 0:
-        st.error("Total monthly income must be greater than zero")
-        st.stop()
+    # -------- BASIC VALIDATION --------
+    if total_income == 0:
+        rejection_reasons.append("No verifiable monthly income")
 
-    # -------- EMI CAPACITY (70%) --------
+    if total_income < 15000:
+        rejection_reasons.append("Monthly income too low for eligibility")
+
+    # -------- EMI-BASED ELIGIBILITY --------
     max_emi = total_income * MAX_DTI
+    max_loan_by_income = calculate_max_loan(max_emi, loan_term_months)
 
-    max_eligible_loan = calculate_max_loan(
-        max_emi, loan_term_months
+    credit_factor = credit_multiplier(credit_score)
+    if credit_factor == 0:
+        rejection_reasons.append("Credit score too low")
+
+    max_eligible_loan = max_loan_by_income * credit_factor
+    eligible_loan_amount = min(loan_amount, max_eligible_loan)
+
+    if eligible_loan_amount <= 0:
+        rejection_reasons.append("Loan not eligible based on income and credit")
+
+    emi = calculate_emi(eligible_loan_amount, loan_term_months)
+    dti = emi / total_income if total_income > 0 else 1
+
+    # -------- STRONG AFFORDABILITY OVERRIDE --------
+    strong_affordability = (
+        dti <= 0.30 and
+        credit_score >= 700 and
+        total_income >= 25000
     )
 
-    eligible_loan = min(requested_loan, max_eligible_loan)
+    # -------- ML FEATURES --------
+    gender_v = 1 if gender == "Male" else 0
+    married_v = 1 if married == "Yes" else 0
+    education_v = 1 if education == "Graduate" else 0
+    self_emp_v = 1 if self_employed == "Yes" else 0
+    dependents_v = 4 if dependents == "3+" else int(dependents)
+    property_v = {"Rural": 0, "Semiurban": 1, "Urban": 2}[property_area]
+    credit_norm = (credit_score - 300) / 600
 
-    emi = calculate_emi(eligible_loan, loan_term_months)
-    dti = emi / total_income
+    ml_input = np.array([[
+        gender_v,
+        married_v,
+        dependents_v,
+        education_v,
+        self_emp_v,
+        np.log1p(applicant_income),
+        np.log1p(coapplicant_income),
+        eligible_loan_amount,
+        loan_term_months,
+        credit_norm,
+        property_v
+    ]])
+
+    approval_prob = model.predict_proba(ml_input)[0][1]
+
+    # -------- POLICY OVERRIDE --------
+    if strong_affordability and approval_prob < 0.60:
+        approval_prob = 0.65
+
+    if approval_prob < 0.45 and not strong_affordability:
+        rejection_reasons.append("High predicted default risk")
 
     # ---------------- OUTPUT ----------------
-    st.subheader("Eligibility Result")
+    st.subheader("Loan Eligibility Summary")
+    st.write(f"Maximum Eligible Loan: ₹{max_eligible_loan:,.0f}")
+    st.write(f"Requested Loan: ₹{loan_amount:,.0f}")
+    st.write(f"Approved / Eligible Loan: ₹{eligible_loan_amount:,.0f}")
+    st.write(f"Loan Tenure: {loan_term_months} months")
+    st.write(f"Monthly EMI: ₹{emi:,.0f}")
+    st.write(f"DTI Ratio: {dti*100:.2f}%")
+    st.write(f"Approval Probability: {approval_prob*100:.2f}%")
 
-    st.write(f"**Applicant:** {applicant_name}")
-    if coapplicant_name.strip():
-        st.write(f"**Co-applicant:** {coapplicant_name}")
-
-    st.write(f"**Total Monthly Income:** ₹{total_income:,.0f}")
-    st.write(f"**Loan Tenure:** {loan_term_months} months")
-
-    st.write(f"**Maximum EMI Allowed (70%):** ₹{max_emi:,.0f}")
-    st.write(f"**Maximum Eligible Loan:** ₹{max_eligible_loan:,.0f}")
-    st.write(f"**Requested Loan:** ₹{requested_loan:,.0f}")
-    st.write(f"**Approved / Eligible Loan:** ₹{eligible_loan:,.0f}")
-
-    st.write(f"**Estimated Monthly EMI:** ₹{emi:,.0f}")
-    st.write(f"**DTI Ratio:** {dti*100:.2f}%")
-
-    if requested_loan > max_eligible_loan:
-        st.warning(
-            "Requested loan exceeds eligibility. "
-            "Loan amount adjusted to maximum eligible limit."
-        )
-
-    st.success("Loan is ELIGIBLE under the 70% EMI rule")
+    # ---------------- FINAL DECISION ----------------
+    if rejection_reasons:
+        st.error("Loan Rejected")
+        st.subheader("Reasons")
+        for r in rejection_reasons:
+            st.write(f"- {r}")
+        st.subheader("How to Improve Next Time")
+        for tip in credit_advice(credit_score, dti):
+            st.write(f"• {tip}")
+    else:
+        if loan_amount > max_eligible_loan:
+            st.warning(
+                f"Requested amount reduced to eligible limit: ₹{eligible_loan_amount:,.0f}"
+            )
+        if strong_affordability:
+            st.success(f"Loan Approved: ₹{eligible_loan_amount:,.0f}")
+        else:
+            st.warning(f"Manual Review Required: ₹{eligible_loan_amount:,.0f}")
