@@ -1,17 +1,10 @@
 import numpy as np
 import joblib
 import streamlit as st
-import os
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="Mini Bank Loan System", layout="centered")
-st.title("🏦 Mini Bank Loan Decision System")
-st.caption("All amounts are in INR (₹)")
-
-# ---------------- LOAD MODEL SAFELY ----------------
-if not os.path.exists("loan_model.pkl"):
-    st.error("❌ Model file (loan_model.pkl) not found")
-    st.stop()
+st.title("Mini Bank Loan Decision System")
 
 model = joblib.load("loan_model.pkl")
 
@@ -22,99 +15,177 @@ dependents = st.selectbox("Dependents", ["0", "1", "2", "3+"])
 education = st.selectbox("Education", ["Graduate", "Not Graduate"])
 self_employed = st.selectbox("Self Employed", ["Yes", "No"])
 
+# -------- MONTHLY INCOME --------
 applicant_income = st.number_input(
-    "Applicant Income (Monthly ₹)", min_value=0, step=500
+    "Applicant Monthly Income (₹)", min_value=0, step=1000
 )
 coapplicant_income = st.number_input(
-    "Co-applicant Income (Monthly ₹)", min_value=0, step=500
+    "Co-applicant Monthly Income (₹)", min_value=0, step=1000
+)
+total_income = applicant_income + coapplicant_income
+
+# -------- TENURE (MONTHS) --------
+loan_term_months = st.slider(
+    "Loan Tenure (Months)", min_value=12, max_value=360, value=240, step=12
 )
 
-loan_amount = st.number_input(
-    "Loan Amount (₹)", min_value=1, step=1000
+# -------- CREDIT SCORE --------
+credit_score = st.slider(
+    "Credit Score (300–900)", min_value=300, max_value=900, value=700, step=10
 )
 
-loan_term = st.selectbox(
-    "Loan Term (Months)", [120, 180, 240, 300, 360]
-)
-
-credit_history = st.selectbox("Credit History", ["Good", "Bad"])
 property_area = st.selectbox("Property Area", ["Rural", "Semiurban", "Urban"])
 
-# ---------------- BUTTON ----------------
+# -------- REQUESTED LOAN --------
+loan_amount = st.number_input(
+    "Requested Loan Amount (₹)", min_value=10000, step=10000
+)
+
+# ---------------- CONSTANTS ----------------
+ANNUAL_RATE = 0.09
+MONTHLY_RATE = ANNUAL_RATE / 12
+MAX_DTI = 0.40
+
+# ---------------- FUNCTIONS ----------------
+def credit_multiplier(score):
+    if score >= 800:
+        return 1.0
+    elif score >= 750:
+        return 0.85
+    elif score >= 700:
+        return 0.70
+    elif score >= 650:
+        return 0.55
+    else:
+        return 0.0
+
+
+def calculate_max_loan(max_emi, months):
+    return (
+        max_emi * ((1 + MONTHLY_RATE) ** months - 1)
+    ) / (MONTHLY_RATE * (1 + MONTHLY_RATE) ** months)
+
+
+def calculate_emi(amount, months):
+    return (
+        amount * MONTHLY_RATE * (1 + MONTHLY_RATE) ** months
+    ) / ((1 + MONTHLY_RATE) ** months - 1)
+
+
+def credit_advice(score, dti):
+    advice = []
+    if score < 650:
+        advice += [
+            "Pay EMIs and credit card bills on time for at least 6 months.",
+            "Keep credit card utilization below 30%.",
+            "Avoid applying for multiple loans or cards."
+        ]
+    if score < 700:
+        advice += [
+            "Clear small outstanding loans.",
+            "Do not close old credit accounts."
+        ]
+    if dti > 0.40:
+        advice += [
+            "Reduce existing debts.",
+            "Apply for a lower loan amount or longer tenure."
+        ]
+    advice.append("Maintain stable employment for 6–12 months.")
+    return advice
+
+# ---------------- PROCESS ----------------
 if st.button("Check Loan Eligibility"):
 
-    # ---------------- BASIC VALIDATION ----------------
-    total_income = applicant_income + coapplicant_income
+    rejection_reasons = []
 
-    if total_income <= 0:
-        st.error("❌ Rejected: No income provided")
-        st.stop()
+    # -------- BASIC VALIDATION --------
+    if total_income == 0:
+        rejection_reasons.append("No verifiable monthly income")
 
-    if self_employed == "Yes" and total_income < 3000:
-        st.error("❌ Rejected: Income below minimum for self-employed")
-        st.stop()
+    if total_income < 15000:
+        rejection_reasons.append("Monthly income too low for eligibility")
 
-    if self_employed == "No" and total_income < 2000:
-        st.error("❌ Rejected: Income below minimum")
-        st.stop()
+    # -------- EMI-BASED ELIGIBILITY --------
+    max_emi = total_income * MAX_DTI
+    max_loan_by_income = calculate_max_loan(max_emi, loan_term_months)
 
-    # ---------------- EMI CALCULATION ----------------
-    annual_rate = 0.09
-    monthly_rate = annual_rate / 12
+    credit_factor = credit_multiplier(credit_score)
+    if credit_factor == 0:
+        rejection_reasons.append("Credit score too low")
 
-    emi = (
-        loan_amount
-        * monthly_rate
-        * (1 + monthly_rate) ** loan_term
-    ) / ((1 + monthly_rate) ** loan_term - 1)
+    max_eligible_loan = max_loan_by_income * credit_factor
+    eligible_loan_amount = min(loan_amount, max_eligible_loan)
 
-    dti = emi / total_income
+    if eligible_loan_amount <= 0:
+        rejection_reasons.append("Loan not eligible based on income and credit")
 
-    st.subheader("📊 Affordability Check")
-    st.write(f"Monthly EMI: **₹{emi:.2f}**")
-    st.write(f"DTI Ratio: **{dti * 100:.2f}%**")
+    emi = calculate_emi(eligible_loan_amount, loan_term_months)
+    dti = emi / total_income if total_income > 0 else 1
 
-    if dti > 0.45:
-        st.error("❌ Rejected: EMI too high compared to income")
-        st.stop()
+    # -------- STRONG AFFORDABILITY OVERRIDE --------
+    strong_affordability = (
+        dti <= 0.30 and
+        credit_score >= 700 and
+        total_income >= 25000
+    )
 
-    # ---------------- ENCODING ----------------
-    gender = 1 if gender == "Male" else 0
-    married = 1 if married == "Yes" else 0
-    education = 1 if education == "Graduate" else 0
-    self_employed = 1 if self_employed == "Yes" else 0
-    credit_history = 1 if credit_history == "Good" else 0
-    dependents = 4 if dependents == "3+" else int(dependents)
-    property_area = {"Rural": 0, "Semiurban": 1, "Urban": 2}[property_area]
+    # -------- ML FEATURES --------
+    gender_v = 1 if gender == "Male" else 0
+    married_v = 1 if married == "Yes" else 0
+    education_v = 1 if education == "Graduate" else 0
+    self_emp_v = 1 if self_employed == "Yes" else 0
+    dependents_v = 4 if dependents == "3+" else int(dependents)
+    property_v = {"Rural": 0, "Semiurban": 1, "Urban": 2}[property_area]
+    credit_norm = (credit_score - 300) / 600
 
-    applicant_income_log = np.log1p(applicant_income)
-    coapplicant_income_log = np.log1p(coapplicant_income)
-
-    # ---------------- MODEL INPUT ----------------
-    data = np.array([[
-        gender,
-        married,
-        dependents,
-        education,
-        self_employed,
-        applicant_income_log,
-        coapplicant_income_log,
-        loan_amount,
-        loan_term,
-        credit_history,
-        property_area
+    ml_input = np.array([[
+        gender_v,
+        married_v,
+        dependents_v,
+        education_v,
+        self_emp_v,
+        np.log1p(applicant_income),
+        np.log1p(coapplicant_income),
+        eligible_loan_amount,
+        loan_term_months,
+        credit_norm,
+        property_v
     ]])
 
-    # ---------------- PREDICTION ----------------
-    approval_prob = model.predict_proba(data)[0][1]
+    approval_prob = model.predict_proba(ml_input)[0][1]
 
-    st.subheader("📈 Risk Assessment")
-    st.write(f"Approval Probability: **{approval_prob * 100:.2f}%**")
+    # -------- POLICY OVERRIDE --------
+    if strong_affordability and approval_prob < 0.60:
+        approval_prob = 0.65
+
+    if approval_prob < 0.45 and not strong_affordability:
+        rejection_reasons.append("High predicted default risk")
+
+    # ---------------- OUTPUT ----------------
+    st.subheader("Loan Eligibility Summary")
+    st.write(f"Maximum Eligible Loan: ₹{max_eligible_loan:,.0f}")
+    st.write(f"Requested Loan: ₹{loan_amount:,.0f}")
+    st.write(f"Approved / Eligible Loan: ₹{eligible_loan_amount:,.0f}")
+    st.write(f"Loan Tenure: {loan_term_months} months")
+    st.write(f"Monthly EMI: ₹{emi:,.0f}")
+    st.write(f"DTI Ratio: {dti*100:.2f}%")
+    st.write(f"Approval Probability: {approval_prob*100:.2f}%")
 
     # ---------------- FINAL DECISION ----------------
-    if approval_prob >= 0.60 and dti <= 0.35:
-        st.success("✅ Loan Approved")
-    elif approval_prob >= 0.45:
-        st.warning("⚠️ Manual Review Required")
+    if rejection_reasons:
+        st.error("Loan Rejected")
+        st.subheader("Reasons")
+        for r in rejection_reasons:
+            st.write(f"- {r}")
+        st.subheader("How to Improve Next Time")
+        for tip in credit_advice(credit_score, dti):
+            st.write(f"• {tip}")
     else:
-        st.error("❌ Loan Rejected")
+        if loan_amount > max_eligible_loan:
+            st.warning(
+                f"Requested amount reduced to eligible limit: ₹{eligible_loan_amount:,.0f}"
+            )
+        if strong_affordability:
+            st.success(f"Loan Approved: ₹{eligible_loan_amount:,.0f}")
+        else:
+            st.warning(f"Manual Review Required: ₹{eligible_loan_amount:,.0f}")
