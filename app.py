@@ -1,88 +1,50 @@
 import numpy as np
+import pandas as pd
 import joblib
-import streamlit as st
 
-st.set_page_config(page_title="Mini Bank Loan System", layout="centered")
-st.title("Mini Bank Loan Decision System")
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import accuracy_score
 
-model = joblib.load("loan_model.pkl")
 
-gender = st.selectbox("Gender", ["Male", "Female"])
-married = st.selectbox("Married", ["Yes", "No"])
-dependents = st.selectbox("Dependents", ["0", "1", "2", "3+"])
-education = st.selectbox("Education", ["Graduate", "Not Graduate"])
-self_employed = st.selectbox("Self Employed", ["Yes", "No"])
+df = pd.read_csv("dataset.csv")
 
-applicant_income = st.number_input("Applicant Income (monthly)", min_value=0)
-coapplicant_income = st.number_input("Coapplicant Income (monthly)", min_value=0)
-loan_amount = st.number_input("Loan Amount", min_value=1)
-loan_term = st.selectbox("Loan Term (months)", [120, 180, 240, 300, 360])
+df["Loan_Status"] = df["Loan_Status"].map({"N": 0, "Y": 1})
+df["Dependents"] = df["Dependents"].replace("3+", 4)
 
-credit_history = st.selectbox("Credit History", ["Good", "Bad"])
-property_area = st.selectbox("Property Area", ["Rural", "Semiurban", "Urban"])
+df.replace({
+    "Gender": {"Male": 1, "Female": 0},
+    "Married": {"Yes": 1, "No": 0},
+    "Education": {"Graduate": 1, "Not Graduate": 0},
+    "Self_Employed": {"Yes": 1, "No": 0},
+    "Property_Area": {"Rural": 0, "Semiurban": 1, "Urban": 2}
+}, inplace=True)
 
-if st.button("Check Loan Eligibility"):
+X = df.drop(columns=["Loan_ID", "Loan_Status"])
+y = df["Loan_Status"]
 
-    total_income = applicant_income + coapplicant_income
+X["ApplicantIncome"] = np.log1p(X["ApplicantIncome"])
+X["CoapplicantIncome"] = np.log1p(X["CoapplicantIncome"])
 
-    if total_income == 0:
-        st.error("Rejected: No income")
-        st.stop()
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.1, stratify=y, random_state=42
+)
 
-    if self_employed == "Yes" and total_income < 3000:
-        st.error("Rejected: Income below minimum for self-employed")
-        st.stop()
+pipeline = Pipeline([
+    ("imputer", SimpleImputer(strategy="median")),
+    ("gb", GradientBoostingClassifier(
+        n_estimators=300,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=42
+    ))
+])
 
-    if self_employed == "No" and total_income < 2000:
-        st.error("Rejected: Income below minimum")
-        st.stop()
+pipeline.fit(X_train, y_train)
 
-    # ---------- EMI CALCULATION ----------
-    annual_rate = 0.09
-    monthly_rate = annual_rate / 12
+print("Accuracy:", accuracy_score(y_test, pipeline.predict(X_test)))
 
-    emi = (
-        loan_amount * monthly_rate *
-        (1 + monthly_rate) ** loan_term
-    ) / ((1 + monthly_rate) ** loan_term - 1)
-
-    dti = emi / total_income
-
-    st.subheader("Affordability Check")
-    st.write(f"Monthly EMI: **{emi:.2f}**")
-    st.write(f"DTI Ratio: **{dti*100:.2f}%**")
-
-    if dti > 0.45:
-        st.error("Rejected: EMI too high compared to income")
-        st.stop()
-
-    # ---------- ML RISK MODEL ----------
-    gender = 1 if gender == "Male" else 0
-    married = 1 if married == "Yes" else 0
-    education = 1 if education == "Graduate" else 0
-    self_employed = 1 if self_employed == "Yes" else 0
-    credit_history = 1 if credit_history == "Good" else 0
-    dependents = 4 if dependents == "3+" else int(dependents)
-    property_area = {"Rural": 0, "Semiurban": 1, "Urban": 2}[property_area]
-
-    applicant_income_log = np.log1p(applicant_income)
-    coapplicant_income_log = np.log1p(coapplicant_income)
-
-    data = np.array([[
-        gender, married, dependents, education, self_employed,
-        applicant_income_log, coapplicant_income_log,
-        loan_amount, loan_term, credit_history, property_area
-    ]])
-
-    approval_prob = model.predict_proba(data)[0][1]
-
-    st.subheader("Risk Assessment")
-    st.write(f"Approval Probability: **{approval_prob*100:.2f}%**")
-
-    # ---------- FINAL BANK DECISION ----------
-    if approval_prob >= 0.60 and dti <= 0.35:
-        st.success("Approved")
-    elif approval_prob >= 0.45:
-        st.warning("Manual Review Required")
-    else:
-        st.error("Rejected")
+joblib.dump(pipeline, "loan_model.pkl")
