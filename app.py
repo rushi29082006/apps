@@ -22,7 +22,6 @@ applicant_income = st.number_input(
 coapplicant_income = st.number_input(
     "Co-applicant Monthly Income (₹)", min_value=0, step=1000
 )
-
 total_income = applicant_income + coapplicant_income
 
 # -------- TENURE (MONTHS) --------
@@ -45,7 +44,7 @@ loan_amount = st.number_input(
 # ---------------- CONSTANTS ----------------
 ANNUAL_RATE = 0.09
 MONTHLY_RATE = ANNUAL_RATE / 12
-MAX_DTI = 0.40  # 40% EMI rule
+MAX_DTI = 0.40
 
 # ---------------- FUNCTIONS ----------------
 def credit_multiplier(score):
@@ -58,7 +57,7 @@ def credit_multiplier(score):
     elif score >= 650:
         return 0.55
     else:
-        return 0.40  # minimum eligibility, NOT rejection
+        return 0.40
 
 
 def calculate_max_loan(max_emi, months):
@@ -72,30 +71,45 @@ def calculate_emi(amount, months):
         amount * MONTHLY_RATE * (1 + MONTHLY_RATE) ** months
     ) / ((1 + MONTHLY_RATE) ** months - 1)
 
+
+def improvement_advice(score, dti, income, tenure):
+    advice = []
+
+    if score < 750:
+        advice.append("Improve credit score by paying EMIs and credit card bills on time.")
+
+    if dti > 0.30:
+        advice.append("Reduce EMI burden by choosing a longer tenure or lower loan amount.")
+
+    if income < 30000:
+        advice.append("Increase monthly income or add a co-applicant.")
+
+    if tenure < 180:
+        advice.append("Opt for a longer tenure to increase eligible loan amount.")
+
+    advice.append("Maintain stable employment and avoid multiple loan applications.")
+
+    return advice
+
 # ---------------- PROCESS ----------------
 if st.button("Calculate Eligibility"):
 
     # -------- EMI CAPACITY --------
     max_emi = total_income * MAX_DTI
+    max_loan_by_income = calculate_max_loan(max_emi, loan_term_months)
 
-    max_loan_by_income = calculate_max_loan(
-        max_emi, loan_term_months
-    )
-
-    # -------- CREDIT SCALING (NO REJECTION) --------
+    # -------- CREDIT SCALING --------
     credit_factor = credit_multiplier(credit_score)
-
     max_eligible_loan = max_loan_by_income * credit_factor
 
     # -------- FINAL ELIGIBLE LOAN --------
     eligible_loan_amount = min(loan_amount, max_eligible_loan)
 
-    # -------- EMI ON ELIGIBLE LOAN --------
+    # -------- EMI --------
     emi = calculate_emi(eligible_loan_amount, loan_term_months)
-
     dti = emi / total_income if total_income > 0 else 0
 
-    # ---------------- OPTIONAL ML (NO BLOCKING) ----------------
+    # ---------------- OPTIONAL ML (INFORMATIVE ONLY) ----------------
     gender_v = 1 if gender == "Male" else 0
     married_v = 1 if married == "Yes" else 0
     education_v = 1 if education == "Graduate" else 0
@@ -120,15 +134,40 @@ if st.button("Calculate Eligibility"):
 
     approval_prob = model.predict_proba(ml_input)[0][1]
 
-    # ---------------- OUTPUT (ONLY WHAT YOU ASKED) ----------------
+    # ---------------- OUTPUT ----------------
     st.subheader("Eligibility Result")
 
     st.write(f"**Eligible Loan Amount:** ₹{eligible_loan_amount:,.0f}")
-    st.write(f"**Monthly EMI:** ₹{emi:,.0f}")
+    st.write(f"**Estimated Monthly EMI:** ₹{emi:,.0f}")
     st.write(f"**Loan Tenure:** {loan_term_months} months")
     st.write(f"**DTI Ratio:** {dti*100:.2f}%")
 
+    # -------- WHY THIS AMOUNT IS ELIGIBLE --------
+    st.subheader("Why This Amount Is Eligible")
+
+    st.write(
+        f"- Based on 40% EMI rule, your maximum affordable EMI is ₹{max_emi:,.0f}."
+    )
+    st.write(
+        f"- With a tenure of {loan_term_months} months, this supports a loan of up to ₹{max_loan_by_income:,.0f}."
+    )
+    st.write(
+        f"- Your credit score scales the eligible amount to ₹{max_eligible_loan:,.0f}."
+    )
+
     if loan_amount > max_eligible_loan:
-        st.info(
-            f"Requested amount adjusted to maximum eligible limit."
+        st.write(
+            "- Requested loan exceeded eligibility, so it was adjusted to the eligible limit."
         )
+    else:
+        st.write(
+            "- Requested loan is within the eligible limit."
+        )
+
+    # -------- IMPROVEMENT ADVICE --------
+    st.subheader("How to Improve Eligibility Next Time")
+
+    for tip in improvement_advice(
+        credit_score, dti, total_income, loan_term_months
+    ):
+        st.write(f"• {tip}")
